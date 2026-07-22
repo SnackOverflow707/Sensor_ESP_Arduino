@@ -4,8 +4,8 @@ namespace UART
 {
 
 static constexpr int UART_NUMBER = 1;
-static constexpr int UART_TX_PIN = 17;
-static constexpr int UART_RX_PIN = 16;
+static constexpr int UART_TX_PIN = 4;
+static constexpr int UART_RX_PIN = 5;
 
 static constexpr uint32_t UART_BAUD = 115200;
 static constexpr uint8_t FRAME_SYNC = 0xAA;
