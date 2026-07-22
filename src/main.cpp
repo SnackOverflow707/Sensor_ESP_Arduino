@@ -10,6 +10,9 @@
 #define SAMPLE_RATE  40000   
 #define N            256
 
+#define WIFI_SWITCH_PIN 2
+#define WIFI_SWITCH_MASK 0x04
+
 uint16_t samples[N];
 
 float sin1[N];
@@ -75,7 +78,7 @@ void setup()
     adc1_config_width(ADC_WIDTH_12Bit);
     adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_12);
 
-
+    pinMode(WIFI_SWITCH_PIN, INPUT_PULLUP);
 
     generateReference(1000.0f, sin1, cos1);
     generateReference(10000.0f, sin10, cos10);
@@ -85,6 +88,12 @@ void setup()
 
 void loop()
 {
+    uint8_t mask = 0;
+    // Switch closed -> LOW -> Wi-Fi ON
+    if (digitalRead(WIFI_SWITCH_PIN) == LOW)
+    {
+        mask |= WIFI_SWITCH_MASK;
+    }
     sampleADC();                                 // updates actualSampleRate
 
     generateReference(1000.0f, sin1, cos1);       // now matches the real Fs
@@ -108,7 +117,8 @@ const uint16_t mag10ToSend =
 UART::sendIRData(
     mag1ToSend,
     mag10ToSend,
-    0
+    mask
+    
 );
 
 

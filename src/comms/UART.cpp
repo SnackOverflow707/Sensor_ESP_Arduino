@@ -9,6 +9,7 @@ static constexpr int UART_RX_PIN = 5;
 
 static constexpr uint32_t UART_BAUD = 115200;
 static constexpr uint8_t FRAME_SYNC = 0xAA;
+
 static constexpr uint8_t PAYLOAD_LENGTH = 5;
 
 static HardwareSerial uart(UART_NUMBER);
