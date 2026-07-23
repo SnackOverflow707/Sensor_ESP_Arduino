@@ -1,5 +1,5 @@
-
 #include "UART.h"
+#include <string.h>
 namespace UART
 {
 
@@ -9,8 +9,6 @@ static constexpr int UART_RX_PIN = 5;
 
 static constexpr uint32_t UART_BAUD = 115200;
 static constexpr uint8_t FRAME_SYNC = 0xAA;
-
-static constexpr uint8_t PAYLOAD_LENGTH = 5;
 
 static HardwareSerial uart(UART_NUMBER);
 
@@ -24,13 +22,29 @@ void begin()
     );
 }
 
+
+static void sendFrame(uint8_t type, const uint8_t *payload, uint8_t len)
+{
+    uint8_t checksum = 0;
+    for (uint8_t i = 0; i < len; i++)
+    {
+        checksum ^= payload[i];
+    }
+
+    uart.write(FRAME_SYNC);
+    uart.write(type);
+    uart.write(len);
+    uart.write(payload, len);
+    uart.write(checksum);
+}
+
 void sendIRData(
     uint16_t mag1,
     uint16_t mag2,
     uint8_t mask
 )
 {
-    uint8_t payload[PAYLOAD_LENGTH];
+    uint8_t payload[5];
 
     payload[0] = mag1 & 0xFF;
     payload[1] = (mag1 >> 8) & 0xFF;
@@ -40,17 +54,17 @@ void sendIRData(
 
     payload[4] = mask;
 
-    uint8_t checksum = 0;
+    sendFrame(FRAME_TYPE_IR, payload, sizeof(payload));
+}
 
-    for (int i = 0; i < PAYLOAD_LENGTH; i++)
-    {
-        checksum ^= payload[i];
-    }
+void sendMetalData(
+    float freqHz
+)
+{
+    uint8_t payload[sizeof(float)];
+    memcpy(payload, &freqHz, sizeof(float));   // native little-endian layout, same convention SENSOR_ESP uses
 
-    uart.write(FRAME_SYNC);
-    uart.write(PAYLOAD_LENGTH);
-    uart.write(payload, PAYLOAD_LENGTH);
-    uart.write(checksum);
+    sendFrame(FRAME_TYPE_METAL, payload, sizeof(payload));
 }
 
 } // namespace UART

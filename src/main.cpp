@@ -3,6 +3,7 @@
 #include "driver/ledc.h"
 #include "driver/adc.h"
 #include "UART.h"
+#include "MetalDetector.h"
 
 // LED pins
 
@@ -83,6 +84,8 @@ void setup()
     generateReference(1000.0f, sin1, cos1);
     generateReference(10000.0f, sin10, cos10);
 
+    Metal::begin();   // starts PCNT read + baseline calibration on its own task (core 0)
+
     Serial.println("Frequency detector ready");
 }
 
@@ -121,6 +124,8 @@ UART::sendIRData(
     
 );
 
+    Metal::Reading metalReading = Metal::getLatest();   // non-blocking, whatever the bg task last published
+    UART::sendMetalData(metalReading.freqHz);
 
     delay(100);
 
