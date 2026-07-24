@@ -84,7 +84,8 @@ void setup()
     generateReference(1000.0f, sin1, cos1);
     generateReference(10000.0f, sin10, cos10);
 
-    Metal::begin();   // starts PCNT read + baseline calibration on its own task (core 0)
+    Metal::begin(0, 14);   // detector 1, confirmed wired
+    Metal::begin(1, 13);   // detector 2 -- confirm actual wiring pin
 
     Serial.println("Frequency detector ready");
 }
@@ -124,10 +125,14 @@ UART::sendIRData(
     
 );
 
-    Metal::Reading metalReading = Metal::getLatest();   // non-blocking, whatever the bg task last published
-    UART::sendMetalData(metalReading.freqHz);
-    Serial.printf("[Metal] sent freq=%.2f Hz  delta=%+.2f  class=%d\n",
-        metalReading.freqHz, metalReading.deltaHz, metalReading.metalClass);
+    float freq0 = Metal::getLatestFreq(0);
+    float freq1 = Metal::getLatestFreq(1);
+
+    UART::sendMetalData(0, freq0);
+    UART::sendMetalData(1, freq1);
+
+    Serial.printf("[Metal 0] freq=%.2f Hz\n", freq0);
+    Serial.printf("[Metal 1] freq=%.2f Hz\n", freq1);
 
     delay(100);
 

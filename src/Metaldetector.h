@@ -6,24 +6,13 @@
 
 namespace Metal
 {
-    enum Class : uint8_t
-    {
-        METAL_NONE        = 0,
-        METAL_NON_FERROUS = 1,   // freq shifted UP   (e.g. aluminum, copper -- eddy currents dominate)
-        METAL_FERROUS     = 2,   // freq shifted DOWN (e.g. steel, iron     -- permeability dominates)
-    };
+    static constexpr uint8_t NUM_DETECTORS = 2;
 
-    struct Reading
-    {
-        float freqHz;
-        float deltaHz;
-        Class metalClass;
-    };
+    // Spins up the PCNT read task for detector `id` on its own FreeRTOS
+    // task (core 0), decoupled from loop(). Call once per detector from setup().
+    // oscGpioPin = that detector's Schmitt-trigger output pin.
+    void begin(uint8_t id, int oscGpioPin);
 
-    // Spins up the PCNT read + baseline calibration on its own FreeRTOS
-    // task (core 0), decoupled from loop(). Call once from setup().
-    void begin();
-
-    // Non-blocking. Returns whatever the background task last published.
-    Reading getLatest();
+    // Non-blocking. Returns whatever detector `id`'s background task last measured (Hz).
+    float getLatestFreq(uint8_t id);
 }

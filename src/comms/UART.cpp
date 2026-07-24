@@ -58,11 +58,14 @@ void sendIRData(
 }
 
 void sendMetalData(
+    uint8_t sensorId,
     float freqHz
 )
 {
-    uint8_t payload[sizeof(float)];
-    memcpy(payload, &freqHz, sizeof(float));   // native little-endian layout, same convention SENSOR_ESP uses
+    uint8_t payload[1 + sizeof(float)];
+
+    payload[0] = sensorId;
+    memcpy(payload + 1, &freqHz, sizeof(float));   // native little-endian layout, same convention SENSOR_ESP uses
 
     sendFrame(FRAME_TYPE_METAL, payload, sizeof(payload));
 }

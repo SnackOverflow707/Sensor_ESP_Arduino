@@ -7,7 +7,6 @@ namespace Metal
 {
 
 /* ---------------- tune for your coil/oscillator ---------------- */
-static constexpr int   OSC_GPIO_PIN        = 14;    // <-- set to your actual Schmitt-trigger output pin
 // Direct pulse counting has a resolution floor of ~1/GATE_S (unavoidable --
 // same time/frequency tradeoff for any periodic-signal measurement, not a
 // code limitation). At ~150kHz needing 1Hz precision: GATE_S=1.5 gives
@@ -17,28 +16,31 @@ static constexpr float    GATE_S            = 1.5f;
 static constexpr uint32_t SUBWINDOW_MS      = 100;   // must stay well under the ~218ms it'd take a 16-bit
                                                        // hw counter to overflow at ~150kHz -- we clear it
                                                        // this often in software so it never gets close
-static constexpr int   CALIB_SAMPLES       = 5;      // gate windows averaged at boot for baseline (~5*GATE_S seconds)
-static constexpr float DETECT_THRESHOLD_HZ = 150.0f; // min |delta| to call it "metal" -- re-tune now that the
-                                                       // noise floor dropped ~150x; empirically this can likely
-                                                       // come down a lot, try real Al/steel samples and see
-static constexpr float SMOOTH_ALPHA        = 1.0f;   // EMA smoothing; 1.0 = off. Each sample is already
-                                                       // ~1Hz-precise at GATE_S=1.5, so heavy smoothing just adds
-                                                       // lag on top of an already-slow ~1.5s native update rate
 static constexpr uint16_t FILTER_CLOCK_CYCLES = 10;   // glitch filter, in APB clock cycles (~125ns @ 80MHz);
                                                        // must be << your oscillator's period, max is 1023
 
-static constexpr pcnt_unit_t    PCNT_UNIT    = PCNT_UNIT_0;
+// One PCNT unit per detector -- S3 has 4 (PCNT_UNIT_0..3), we use 0 and 1.
+static constexpr pcnt_unit_t    PCNT_UNITS[NUM_DETECTORS] = { PCNT_UNIT_0, PCNT_UNIT_1 };
 static constexpr pcnt_channel_t PCNT_CHANNEL = PCNT_CHANNEL_0;
 
-static Reading s_latest = { 0.0f, 0.0f, METAL_NONE };
-static portMUX_TYPE s_readingLock = portMUX_INITIALIZER_UNLOCKED;
+struct Instance
+{
+    int          oscGpioPin;
+    float        latestFreq;
+    portMUX_TYPE lock;
+};
 
-static void pcntInit()
+static Instance s_instances[NUM_DETECTORS] = {
+    { -1, 0.0f, portMUX_INITIALIZER_UNLOCKED },
+    { -1, 0.0f, portMUX_INITIALIZER_UNLOCKED },
+};
+
+static void pcntInit(uint8_t id)
 {
     pcnt_config_t cfg = {};
-    cfg.pulse_gpio_num = OSC_GPIO_PIN;
+    cfg.pulse_gpio_num = s_instances[id].oscGpioPin;
     cfg.ctrl_gpio_num  = PCNT_PIN_NOT_USED;   // no level-gating input, just count edges
-    cfg.unit           = PCNT_UNIT;
+    cfg.unit           = PCNT_UNITS[id];
     cfg.channel        = PCNT_CHANNEL;
     cfg.pos_mode       = PCNT_COUNT_INC;      // count rising edges
     cfg.neg_mode       = PCNT_COUNT_DIS;      // ignore falling edges
@@ -49,12 +51,12 @@ static void pcntInit()
 
     ESP_ERROR_CHECK(pcnt_unit_config(&cfg));
 
-    ESP_ERROR_CHECK(pcnt_set_filter_value(PCNT_UNIT, FILTER_CLOCK_CYCLES));
-    ESP_ERROR_CHECK(pcnt_filter_enable(PCNT_UNIT));
+    ESP_ERROR_CHECK(pcnt_set_filter_value(PCNT_UNITS[id], FILTER_CLOCK_CYCLES));
+    ESP_ERROR_CHECK(pcnt_filter_enable(PCNT_UNITS[id]));
 
-    ESP_ERROR_CHECK(pcnt_counter_pause(PCNT_UNIT));
-    ESP_ERROR_CHECK(pcnt_counter_clear(PCNT_UNIT));
-    ESP_ERROR_CHECK(pcnt_counter_resume(PCNT_UNIT));
+    ESP_ERROR_CHECK(pcnt_counter_pause(PCNT_UNITS[id]));
+    ESP_ERROR_CHECK(pcnt_counter_clear(PCNT_UNITS[id]));
+    ESP_ERROR_CHECK(pcnt_counter_resume(PCNT_UNITS[id]));
 }
 
 // Blocks the calling task for ~GATE_S seconds, returns measured frequency
@@ -64,9 +66,10 @@ static void pcntInit()
 // vTaskDelay duration -- the delay is only a scheduling request, the real
 // elapsed time can differ by several ms, which at ~150kHz would otherwise
 // dominate the error far more than the counting itself does.
-static float measureFreqOnce()
+static float measureFreqOnce(uint8_t id)
 {
-    ESP_ERROR_CHECK(pcnt_counter_clear(PCNT_UNIT));
+    pcnt_unit_t unit = PCNT_UNITS[id];
+    ESP_ERROR_CHECK(pcnt_counter_clear(unit));
 
     int64_t accum = 0;
     uint32_t t0 = micros();
@@ -78,8 +81,8 @@ static float measureFreqOnce()
         vTaskDelay(pdMS_TO_TICKS(SUBWINDOW_MS));
 
         int16_t raw = 0;
-        ESP_ERROR_CHECK(pcnt_get_counter_value(PCNT_UNIT, &raw));
-        ESP_ERROR_CHECK(pcnt_counter_clear(PCNT_UNIT));
+        ESP_ERROR_CHECK(pcnt_get_counter_value(unit, &raw));
+        ESP_ERROR_CHECK(pcnt_counter_clear(unit));
         accum += raw;
 
         elapsedMs = (micros() - t0) / 1000;   // unsigned subtraction, safe across micros() rollover
@@ -93,46 +96,39 @@ static float measureFreqOnce()
 
 static void task(void *arg)
 {
-    pcntInit();
+    uint8_t id = (uint8_t)(uintptr_t)arg;
 
-    Serial.println("[Metal] calibrating baseline, keep coil clear of metal...");
-    double sum = 0;
-    for (int i = 0; i < CALIB_SAMPLES; i++)
-    {
-        sum += measureFreqOnce();
-    }
-    float baselineHz = sum / CALIB_SAMPLES;
-    Serial.printf("[Metal] baseline = %.1f Hz\n", baselineHz);
-
-    float smoothedHz = baselineHz;
+    pcntInit(id);
 
     for (;;)
     {
-        float f = measureFreqOnce();
-        smoothedHz += SMOOTH_ALPHA * (f - smoothedHz);   // EMA to knock down jitter
+        float f = measureFreqOnce(id);
 
-        float delta = smoothedHz - baselineHz;
-        Class cls = METAL_NONE;
-        if (delta > DETECT_THRESHOLD_HZ)       cls = METAL_NON_FERROUS;
-        else if (delta < -DETECT_THRESHOLD_HZ) cls = METAL_FERROUS;
-
-        portENTER_CRITICAL(&s_readingLock);
-        s_latest = { smoothedHz, delta, cls };
-        portEXIT_CRITICAL(&s_readingLock);
+        portENTER_CRITICAL(&s_instances[id].lock);
+        s_instances[id].latestFreq = f;
+        portEXIT_CRITICAL(&s_instances[id].lock);
     }
 }
 
-void begin()
+void begin(uint8_t id, int oscGpioPin)
 {
-    xTaskCreatePinnedToCore(task, "metal_pcnt", 4096, nullptr, 1, nullptr, 0);
+    if (id >= NUM_DETECTORS) return;
+
+    s_instances[id].oscGpioPin = oscGpioPin;
+
+    char name[16];
+    snprintf(name, sizeof(name), "metal_pcnt%u", id);
+    xTaskCreatePinnedToCore(task, name, 4096, (void*)(uintptr_t)id, 1, nullptr, 0);
 }
 
-Reading getLatest()
+float getLatestFreq(uint8_t id)
 {
-    portENTER_CRITICAL(&s_readingLock);
-    Reading r = s_latest;
-    portEXIT_CRITICAL(&s_readingLock);
-    return r;
+    if (id >= NUM_DETECTORS) return 0.0f;
+
+    portENTER_CRITICAL(&s_instances[id].lock);
+    float f = s_instances[id].latestFreq;
+    portEXIT_CRITICAL(&s_instances[id].lock);
+    return f;
 }
 
 } // namespace Metal
