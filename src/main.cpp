@@ -126,6 +126,8 @@ UART::sendIRData(
 
     Metal::Reading metalReading = Metal::getLatest();   // non-blocking, whatever the bg task last published
     UART::sendMetalData(metalReading.freqHz);
+    Serial.printf("[Metal] sent freq=%.2f Hz  delta=%+.2f  class=%d\n",
+        metalReading.freqHz, metalReading.deltaHz, metalReading.metalClass);
 
     delay(100);
 

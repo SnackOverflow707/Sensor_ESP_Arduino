@@ -7,7 +7,7 @@ namespace Metal
 {
 
 /* ---------------- tune for your coil/oscillator ---------------- */
-static constexpr int   OSC_GPIO_PIN        = 15;    // <-- set to your actual Schmitt-trigger output pin
+static constexpr int   OSC_GPIO_PIN        = 14;    // <-- set to your actual Schmitt-trigger output pin
 // Direct pulse counting has a resolution floor of ~1/GATE_S (unavoidable --
 // same time/frequency tradeoff for any periodic-signal measurement, not a
 // code limitation). At ~150kHz needing 1Hz precision: GATE_S=1.5 gives
