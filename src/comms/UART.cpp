@@ -23,9 +23,17 @@ void begin()
 }
 
 
-static void sendFrame(uint8_t type, const uint8_t *payload, uint8_t len)
+static void sendFrame(
+    uint8_t type,
+    const uint8_t* payload,
+    uint8_t len
+)
 {
     uint8_t checksum = 0;
+
+    checksum ^= type;
+    checksum ^= len;
+
     for (uint8_t i = 0; i < len; i++)
     {
         checksum ^= payload[i];
