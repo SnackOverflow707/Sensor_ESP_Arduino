@@ -78,4 +78,25 @@ void sendMetalData(
     sendFrame(FRAME_TYPE_METAL, payload, sizeof(payload));
 }
 
+void sendPoseData(
+    float x,
+    float y,
+    float theta,
+    float vx,
+    float vy,
+    float omega
+)
+{
+    uint8_t payload[6 * sizeof(float)];
+
+    memcpy(payload + 0 * sizeof(float), &x,     sizeof(float));
+    memcpy(payload + 1 * sizeof(float), &y,     sizeof(float));
+    memcpy(payload + 2 * sizeof(float), &theta, sizeof(float));
+    memcpy(payload + 3 * sizeof(float), &vx,    sizeof(float));
+    memcpy(payload + 4 * sizeof(float), &vy,    sizeof(float));
+    memcpy(payload + 5 * sizeof(float), &omega, sizeof(float));
+
+    sendFrame(FRAME_TYPE_POSE, payload, sizeof(payload));
+}
+
 } // namespace UART

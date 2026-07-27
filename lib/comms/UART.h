@@ -10,6 +10,7 @@ namespace UART
     {
         FRAME_TYPE_IR    = 0x01,   // payload: mag1(u16 LE), mag2(u16 LE), mask(u8)  -> 5 bytes
         FRAME_TYPE_METAL = 0x02,   // payload: sensorId(u8), freqHz(float32 LE)      -> 5 bytes
+        FRAME_TYPE_POSE  = 0x03,   // payload: x, y, theta, vx, vy, omega (float32 LE each) -> 24 bytes
     };
 
     void begin();
@@ -23,5 +24,14 @@ namespace UART
     void sendMetalData(
         uint8_t sensorId,
         float freqHz
+    );
+
+    void sendPoseData(
+        float x,
+        float y,
+        float theta,
+        float vx,
+        float vy,
+        float omega
     );
 }
