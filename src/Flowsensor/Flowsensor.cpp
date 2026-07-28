@@ -1,13 +1,24 @@
 #include "FlowSensor.h"
 
-#include <Bitcraze_PMW3901.h>   // lib_deps: bitcraze/PMW3901@^1.3 (add to platformio.ini)
+#include <SPI.h>
+#include <Bitcraze_PMW3901.h>   // lib_deps: bitcraze/Bitcraze PMW3901@^1.2
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 namespace Flow
 {
 
+// ESP32-S3 default hardware SPI pins are SCK=12, MOSI=11, MISO=13, SS=10.
+// MISO=13 collides with Metal detector 1 (PCNT input), which already owns
+// that pin -- so we do NOT use the defaults. Instead we explicitly init
+// SPI on these pins before the sensor library gets a chance to call its
+// own SPI.begin() with no arguments (which would silently no-op once SPI
+// is already started, keeping OUR pin choice -- but only if we go first).
+static constexpr int FLOW_SCK_PIN  = 12;
+static constexpr int FLOW_MOSI_PIN = 11;
+static constexpr int FLOW_MISO_PIN = 16;  // moved off the conflicting default of 13
 
+/* ---------------- geometry / calibration ---------------- */
 // Sensor layout assumed: LEFT and RIGHT mounted side by side, both pointing
 // straight down, both oriented with their local +x axis pointing toward the
 // robot's forward direction. Separated by `baseline` along the robot's
@@ -19,7 +30,8 @@ namespace Flow
 //
 // If your two sensors are physically mounted with a different relative
 // orientation, adjust the sign/axis mapping below to match -- get this
-// wrong and theta will drift or run backwards even though the robot looks like it's moving straight.
+// wrong and theta will drift or run backwards even though the robot looks
+// like it's tracking fine in a straight line.
 
 static Bitcraze_PMW3901 *s_flowLeft  = nullptr;
 static Bitcraze_PMW3901 *s_flowRight = nullptr;
@@ -114,6 +126,13 @@ void begin(int csLeftPin, int csRightPin, float baselineMeters, float pixelsPerM
 {
     s_baselineMeters = baselineMeters;
     s_pixelsPerMeter = pixelsPerMeter;
+
+    // Must happen before Bitcraze_PMW3901::begin() -- that call internally
+    // does SPI.begin() with no args, which only takes effect the FIRST
+    // time SPI is started. Going first here is what makes our pin choice
+    // (avoiding GPIO 13) actually stick instead of silently reverting to
+    // the board default.
+    SPI.begin(FLOW_SCK_PIN, FLOW_MISO_PIN, FLOW_MOSI_PIN, -1);
 
     s_flowLeft  = new Bitcraze_PMW3901(csLeftPin);
     s_flowRight = new Bitcraze_PMW3901(csRightPin);
