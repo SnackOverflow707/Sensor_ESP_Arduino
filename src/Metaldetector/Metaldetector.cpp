@@ -1,4 +1,4 @@
-#include "MetalDetector.h"
+#include "Metaldetector.h"
 #include "driver/pcnt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"

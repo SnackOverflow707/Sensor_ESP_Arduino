@@ -1,4 +1,4 @@
-#include "FlowSensor.h"
+#include "Flowsensor.h"
 
 #include <SPI.h>
 #include <Bitcraze_PMW3901.h>   // lib_deps: bitcraze/Bitcraze PMW3901@^1.2

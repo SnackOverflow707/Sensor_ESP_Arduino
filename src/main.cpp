@@ -5,8 +5,8 @@
 #include "driver/ledc.h"
 #include "driver/adc.h"
 #include "UART.h"
-#include "MetalDetector.h"
-#include "FlowSensor.h"
+#include "Metaldetector.h"
+#include "Flowsensor.h"
 
 #define SAMPLE_RATE 40000
 #define N 256
