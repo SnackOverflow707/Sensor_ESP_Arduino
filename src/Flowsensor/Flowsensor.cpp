@@ -1,4 +1,4 @@
-#include "FlowSensor.h"
+#include "Flowsensor.h"
 
 #include <SPI.h>
 #include <Bitcraze_PMW3901.h>   // lib_deps: bitcraze/Bitcraze PMW3901@^1.2
@@ -36,7 +36,7 @@ static constexpr int FLOW_MISO_PIN = 16;  // moved off the conflicting default o
 static Bitcraze_PMW3901 *s_flowLeft  = nullptr;
 static Bitcraze_PMW3901 *s_flowRight = nullptr;
 
-static float s_baselineMeters  = 0.10f;
+static float s_baselineMeters  = 0.1375f;
 static float s_pixelsPerMeter  = 1.0f;
 
 static Pose         s_pose = {0, 0, 0, 0, 0, 0};
@@ -64,41 +64,42 @@ static void integrateOnce(float dt)
     int16_t dxL, dyL, dxR, dyR;
     readSensorsRaw(dxL, dyL, dxR, dyR);
 
+    // Deadband -- kill sensor read noise before it accumulates into a
+    // random walk. Tune NOISE_FLOOR_COUNTS from stationary logging.
+    static constexpr int16_t NOISE_FLOOR_COUNTS = 2;
+    if (abs(dxL) < NOISE_FLOOR_COUNTS && abs(dxR) < NOISE_FLOOR_COUNTS &&
+        abs(dyL) < NOISE_FLOOR_COUNTS && abs(dyR) < NOISE_FLOOR_COUNTS)
+    {
+        portENTER_CRITICAL(&s_lock);
+        s_pose.vx = 0.0f;
+        s_pose.vy = 0.0f;
+        portEXIT_CRITICAL(&s_lock);
+        return;
+    }
+
     // --- pixels -> meters, still in each sensor's own local frame ---
     const float dxL_m = dxL / s_pixelsPerMeter;
     const float dyL_m = dyL / s_pixelsPerMeter;
     const float dxR_m = dxR / s_pixelsPerMeter;
     const float dyR_m = dyR / s_pixelsPerMeter;
 
-    // --- rigid-body fusion: two sensors -> body-frame velocity + omega ---
-    // (this is a DISPLACEMENT this cycle, not yet a velocity -- we still
-    // divide by dt below to get vx/vy/omega for the Pose struct, but the
-    // position update itself uses the displacement directly, which avoids
-    // compounding a multiply-then-divide-by-dt rounding error every loop)
-    const float d_forward = (dxR_m + dxL_m) * 0.5f;   // body-frame forward displacement this cycle
-    const float d_strafe  = (dyR_m + dyL_m) * 0.5f;   // body-frame strafe displacement this cycle
-    const float d_theta   = (dxR_m - dxL_m) / s_baselineMeters; // radians this cycle
+    // --- two sensors -> body-frame displacement this cycle ---
+    // NOTE: no heading/theta tracking. x/y are just body-frame displacement
+    // summed directly, i.e. this assumes the robot doesn't turn. If it
+    // does turn, x/y will be wrong from that point on -- see comment in
+    // Flowsensor.h.
+    const float d_forward = (dxR_m + dxL_m) * 0.5f;   // forward displacement this cycle
+    const float d_strafe  = (dyR_m + dyL_m) * 0.5f;   // strafe displacement this cycle
 
     portENTER_CRITICAL(&s_lock);
 
-    const float theta = s_pose.theta;
-
-    // rotate body-frame displacement into world frame using the heading
-    // BEFORE this cycle's rotation is applied (standard small-angle
-    // dead-reckoning integration -- fine at 100 Hz where d_theta is tiny)
-    s_pose.x += d_forward * cosf(theta) - d_strafe * sinf(theta);
-    s_pose.y += d_forward * sinf(theta) + d_strafe * cosf(theta);
-    s_pose.theta += d_theta;
-
-    // wrap theta to [-pi, pi] so it never grows unbounded
-    while (s_pose.theta > PI)  s_pose.theta -= 2.0f * PI;
-    while (s_pose.theta < -PI) s_pose.theta += 2.0f * PI;
+    s_pose.x += d_forward;
+    s_pose.y += d_strafe;
 
     if (dt > 0.0f)
     {
-        s_pose.vx    = d_forward / dt;
-        s_pose.vy    = d_strafe  / dt;
-        s_pose.omega = d_theta   / dt;
+        s_pose.vx = d_forward / dt;
+        s_pose.vy = d_strafe  / dt;
     }
 
     portEXIT_CRITICAL(&s_lock);

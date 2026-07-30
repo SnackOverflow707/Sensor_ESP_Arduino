@@ -22,7 +22,7 @@
 // between the two sensors, meters) and pixelsPerMeter (push robot a known
 // distance, count total pixel shift, divide) -- see FlowSensor.h for the
 // calibration procedure. These are placeholders.
-#define FLOW_BASELINE_M   0.10f
+#define FLOW_BASELINE_M   0.1375f
 #define FLOW_PIXELS_PER_M 2000.0f
 
 #define WIFI_SWITCH_PIN 2
