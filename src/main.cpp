@@ -11,18 +11,17 @@
 #define SAMPLE_RATE 40000
 #define N 256
 
-// Optical flow -- SPI chip-select pins (SCK/MOSI/MISO use the default SPI
-// bus, shared between both sensors; only CS needs to be per-sensor).
-// GPIO 18 and 21 were free after the pin audit (1,2,4,5,7,8,13,14 already
-// claimed by IR/wifi/UART/servo/metal detector).
-#define FLOW_CS_LEFT_PIN  18
-#define FLOW_CS_RIGHT_PIN 21
+// Optical flow -- single PMW3901 in use (the other unit died -- readings
+// stuck at 0xFFFF/-1 regardless of motion, confirmed it's the chip and not
+// the wiring by swapping module positions). Heading (theta/omega) will come
+// from an IMU once it arrives; see Flowsensor.h.
+// GPIO 18 was free after the pin audit (1,2,4,5,7,8,13,14 already claimed
+// by IR/wifi/UART/servo/metal detector).
+#define FLOW_CS_PIN 18
 
-// TODO before trusting any output: measure the real baseline (distance
-// between the two sensors, meters) and pixelsPerMeter (push robot a known
-// distance, count total pixel shift, divide) -- see FlowSensor.h for the
-// calibration procedure. These are placeholders.
-#define FLOW_BASELINE_M   0.1375f
+// TODO before trusting any output: measure the real pixelsPerMeter (push
+// robot a known distance, count total pixel shift, divide) -- see
+// Flowsensor.h for the calibration procedure. This is a placeholder.
 #define FLOW_PIXELS_PER_M 2000.0f
 
 #define WIFI_SWITCH_PIN 2
@@ -173,7 +172,7 @@ void setup()
     Metal::begin(0, 14);
     Metal::begin(1, 13);
 
-    Flow::begin(FLOW_CS_LEFT_PIN, FLOW_CS_RIGHT_PIN, FLOW_BASELINE_M, FLOW_PIXELS_PER_M);
+    Flow::begin(FLOW_CS_PIN, FLOW_PIXELS_PER_M);
 
     Serial.println("Frequency detector ready");
 }
@@ -222,15 +221,18 @@ void loop()
     UART::sendMetalData(0, freq0);
     UART::sendMetalData(1, freq1);
 
-    Serial.printf(
-        "[Metal 0] freq=%.2f Hz\n",
-        freq0
-    );
-
-    Serial.printf(
-        "[Metal 1] freq=%.2f Hz\n",
-        freq1
-    );
+    // TEMP DIAGNOSTIC -- silenced while re-checking the flow sensor axis
+    // mapping in Flowsensor.cpp; these lines were burying the [Flow raw]
+    // output. Uncomment once the flow sensor debugging is done.
+    // Serial.printf(
+    //     "[Metal 0] freq=%.2f Hz\n",
+    //     freq0
+    // );
+    //
+    // Serial.printf(
+    //     "[Metal 1] freq=%.2f Hz\n",
+    //     freq1
+    // );
 
     Flow::Pose pose = Flow::getPose();
 
@@ -239,10 +241,13 @@ void loop()
         pose.vx, pose.vy, pose.omega
     );
 
-    Serial.printf(
-        "[Pose] x=%.3f m  y=%.3f m  theta=%.1f deg\n",
-        pose.x, pose.y, pose.theta * 180.0f / PI
-    );
+    // TEMP DIAGNOSTIC -- silenced along with [Metal 0]/[Metal 1] above so
+    // [Flow raw] (2 Hz) isn't buried by this firing every loop() iteration
+    // (100+ Hz). Uncomment once the flow sensor axis debugging is done.
+    // Serial.printf(
+    //     "[Pose] x=%.3f m  y=%.3f m\n",
+    //     pose.x, pose.y
+    // );
 
     // Keep the loop responsive enough for smooth servo movement.
     delay(5);
