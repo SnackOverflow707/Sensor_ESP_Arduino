@@ -1,19 +1,43 @@
 #include <Arduino.h>
 #include <math.h>
+#include <SPI.h>
 #include <ESP32Servo.h>
 
 #include "driver/ledc.h"
 #include "driver/adc.h"
 #include "UART.h"
 #include "Metaldetector.h"
+#include "PAA5100JE.h"
 
 #define SAMPLE_RATE 40000
 #define N 256
 
-// Optical flow -- removed. Both PMW3901 units and the PAA5100JE
-// replacement died; not carrying this hardware forward on this ESP for
-// now. If it comes back, the driver code is still on the Sensor_ESP
-// git history (Flowsensor.h/.cpp, PAA5100JE.h/.cpp) to resurrect from.
+// Optical flow -- back in, on a new PAA5100JE. The old Flowsensor.cpp
+// (PMW3901-based) is gone for good; this talks to PAA5100JE.h/.cpp
+// directly and owns the SPI bus itself since there's no longer a
+// separate flow-sensor setup file configuring it first.
+//
+// !!! CS/SCK/MISO/MOSI below are placeholders -- I picked GPIOs that
+// don't collide with anything else already in use on this board (2, 4,
+// 5, 7, 8, 13, 14, plus whatever backs ADC1_CHANNEL_0, and 19/20 which
+// are native USB on the S3). Confirm these against your actual wiring
+// before flashing.
+#define FLOW_CS_PIN   18
+#define FLOW_SCK_PIN  17
+#define FLOW_MISO_PIN 15
+#define FLOW_MOSI_PIN 16
+
+// Sensor reports motion in raw counts, not mm -- this scale factor is
+// NOT calibrated for your mounting height. 11.914 counts/mm is the
+// PMW3901 datasheet nominal figure at its reference height; treat it as
+// a starting guess and re-derive it by pushing the robot a known
+// distance and comparing against posX/posY.
+static constexpr float FLOW_COUNTS_PER_MM = 11.914f;
+
+// How often to dump a combined debug line to Serial. Printing every
+// loop iteration (~200Hz with the delay(5) below) is enough text at
+// 115200 baud to noticeably slow the loop down.
+#define DEBUG_PRINT_INTERVAL_MS 200
 
 #define WIFI_SWITCH_PIN 2
 #define WIFI_SWITCH_MASK 0x04
@@ -43,6 +67,18 @@ float sin10[N];
 float cos10[N];
 
 float actualSampleRate = SAMPLE_RATE;
+
+PAA5100JE flowSensor(FLOW_CS_PIN);
+bool flowReady = false;
+
+// Dead-reckoned position, accumulated from flow deltas. No gyro on this
+// board, so theta/omega are not tracked -- sendPoseData() below always
+// sends 0 for those two fields.
+float posX = 0.0f;
+float posY = 0.0f;
+unsigned long lastFlowUpdateMs = 0;
+
+unsigned long lastDebugPrintMs = 0;
 
 void generateReference(float freq, float* s, float* c)
 {
@@ -130,6 +166,45 @@ void updateServo()
     sweepServo.write(servoAngle);
 }
 
+// Reads one motion sample, integrates it into posX/posY when valid, and
+// returns the instantaneous velocity for this update (0,0 if the sample
+// was invalid or the sensor never initialized).
+void updateFlowSensor(float *vx, float *vy)
+{
+    *vx = 0.0f;
+    *vy = 0.0f;
+
+    const unsigned long now = millis();
+    const float dt = (now - lastFlowUpdateMs) / 1000.0f;
+    lastFlowUpdateMs = now;
+
+    if (!flowReady)
+    {
+        return;
+    }
+
+    int16_t dx, dy;
+    uint8_t squal;
+    bool valid = flowSensor.readMotionBurst(&dx, &dy, &squal);
+
+    // Reject the sample instead of integrating garbage: readMotionBurst()
+    // already flags out-of-range/no-new-data; also guard dt in case this
+    // is the very first call.
+    if (!valid || dt <= 0.0f)
+    {
+        return;
+    }
+
+    const float dxMm = static_cast<float>(dx) / FLOW_COUNTS_PER_MM;
+    const float dyMm = static_cast<float>(dy) / FLOW_COUNTS_PER_MM;
+
+    posX += dxMm;
+    posY += dyMm;
+
+    *vx = dxMm / dt;
+    *vy = dyMm / dt;
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -162,6 +237,20 @@ void setup()
 
     Metal::begin(0, 14);
     Metal::begin(1, 13);
+
+    SPI.begin(FLOW_SCK_PIN, FLOW_MISO_PIN, FLOW_MOSI_PIN, FLOW_CS_PIN);
+    flowReady = flowSensor.begin();
+
+    if (flowReady)
+    {
+        Serial.println("[PAA5100JE] ready");
+    }
+    else
+    {
+        Serial.println("[PAA5100JE] init failed -- check wiring/CS pin, position will read 0");
+    }
+
+    lastFlowUpdateMs = millis();
 
     Serial.println("Frequency detector ready");
 }
@@ -210,14 +299,27 @@ void loop()
     UART::sendMetalData(0, freq0);
     UART::sendMetalData(1, freq1);
 
-    // No pose data sent anymore -- flow sensor removed, see note above
-    // FLOW_CS_PIN used to be defined. If FRAME_TYPE_POSE is still
-    // expected on the receiving end (main board), that side needs to
-    // handle its absence now -- worth checking, not assumed here.
+    float flowVx = 0.0f;
+    float flowVy = 0.0f;
+    updateFlowSensor(&flowVx, &flowVy);
 
-    // Uncomment for raw metal detector debugging:
-    // Serial.printf("[Metal 0] freq=%.2f Hz\n", freq0);
-    // Serial.printf("[Metal 1] freq=%.2f Hz\n", freq1);
+    // theta/omega are always 0 -- no gyro on this board to integrate them.
+    UART::sendPoseData(posX, posY, 0.0f, flowVx, flowVy, 0.0f);
+
+    const unsigned long nowMs = millis();
+
+    if (nowMs - lastDebugPrintMs >= DEBUG_PRINT_INTERVAL_MS)
+    {
+        lastDebugPrintMs = nowMs;
+
+        Serial.printf(
+            "[IR] mag1=%u mag10=%u wifi=%d | [Metal] f0=%.2fHz f1=%.2fHz | "
+            "[Flow] ready=%d pos=(%.1f, %.1f)mm v=(%.1f, %.1f)mm/s\n",
+            mag1ToSend, mag10ToSend, (mask & WIFI_SWITCH_MASK) != 0,
+            freq0, freq1,
+            flowReady, posX, posY, flowVx, flowVy
+        );
+    }
 
     // Keep the loop responsive enough for smooth servo movement.
     delay(5);
