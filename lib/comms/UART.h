@@ -11,6 +11,7 @@ namespace UART
         FRAME_TYPE_IR    = 0x01,   // payload: mag1(u16 LE), mag2(u16 LE), mask(u8)  -> 5 bytes
         FRAME_TYPE_METAL = 0x02,   // payload: sensorId(u8), freqHz(float32 LE)      -> 5 bytes
         FRAME_TYPE_POSE  = 0x03,   // payload: x, y, theta, vx, vy, omega (float32 LE each) -> 24 bytes
+                                   //   frame is only sent when the PAA5100JE SQUAL check passes;
     };
 
     void begin();
