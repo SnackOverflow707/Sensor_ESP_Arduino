@@ -6,17 +6,17 @@
 #include "driver/adc.h"
 #include "UART.h"
 #include "Metaldetector.h"
-#include "Flowsensor.h"
+#include "PAA5100JE.h"
 
 #define SAMPLE_RATE 40000
 #define N 256
 
-// Optical flow -- single PMW3901 in use (the other unit died -- readings
-// stuck at 0xFFFF/-1 regardless of motion, confirmed it's the chip and not
-// the wiring by swapping module positions). Heading (theta/omega) will come
-// from an IMU once it arrives; see Flowsensor.h.
-// GPIO 18 was free after the pin audit (1,2,4,5,7,8,13,14 already claimed
-// by IR/wifi/UART/servo/metal detector).
+// Optical flow -- both original PMW3901 units are now dead. Replaced with
+// a single PAA5100JE (this project's own driver -- see PAA5100JE.h/.cpp)
+// on the same CS pin the old sensor used, so this is just a physical
+// sensor swap, no rewiring beyond that. Same SPI bus as before
+// (SCK=12/MOSI=11/MISO=16, see Flowsensor.cpp). Heading (theta/omega)
+// will come from an IMU once it arrives; see Flowsensor.h.
 #define FLOW_CS_PIN 18
 
 // TODO before trusting any output: measure the real pixelsPerMeter (push
