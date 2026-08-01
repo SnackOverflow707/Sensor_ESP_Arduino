@@ -6,23 +6,14 @@
 #include "driver/adc.h"
 #include "UART.h"
 #include "Metaldetector.h"
-#include "PAA5100JE.h"
 
 #define SAMPLE_RATE 40000
 #define N 256
 
-// Optical flow -- both original PMW3901 units are now dead. Replaced with
-// a single PAA5100JE (this project's own driver -- see PAA5100JE.h/.cpp)
-// on the same CS pin the old sensor used, so this is just a physical
-// sensor swap, no rewiring beyond that. Same SPI bus as before
-// (SCK=12/MOSI=11/MISO=16, see Flowsensor.cpp). Heading (theta/omega)
-// will come from an IMU once it arrives; see Flowsensor.h.
-#define FLOW_CS_PIN 18
-
-// TODO before trusting any output: measure the real pixelsPerMeter (push
-// robot a known distance, count total pixel shift, divide) -- see
-// Flowsensor.h for the calibration procedure. This is a placeholder.
-#define FLOW_PIXELS_PER_M 2000.0f
+// Optical flow -- removed. Both PMW3901 units and the PAA5100JE
+// replacement died; not carrying this hardware forward on this ESP for
+// now. If it comes back, the driver code is still on the Sensor_ESP
+// git history (Flowsensor.h/.cpp, PAA5100JE.h/.cpp) to resurrect from.
 
 #define WIFI_SWITCH_PIN 2
 #define WIFI_SWITCH_MASK 0x04
@@ -172,8 +163,6 @@ void setup()
     Metal::begin(0, 14);
     Metal::begin(1, 13);
 
-    Flow::begin(FLOW_CS_PIN, FLOW_PIXELS_PER_M);
-
     Serial.println("Frequency detector ready");
 }
 
@@ -221,33 +210,14 @@ void loop()
     UART::sendMetalData(0, freq0);
     UART::sendMetalData(1, freq1);
 
-    // TEMP DIAGNOSTIC -- silenced while re-checking the flow sensor axis
-    // mapping in Flowsensor.cpp; these lines were burying the [Flow raw]
-    // output. Uncomment once the flow sensor debugging is done.
-    // Serial.printf(
-    //     "[Metal 0] freq=%.2f Hz\n",
-    //     freq0
-    // );
-    //
-    // Serial.printf(
-    //     "[Metal 1] freq=%.2f Hz\n",
-    //     freq1
-    // );
+    // No pose data sent anymore -- flow sensor removed, see note above
+    // FLOW_CS_PIN used to be defined. If FRAME_TYPE_POSE is still
+    // expected on the receiving end (main board), that side needs to
+    // handle its absence now -- worth checking, not assumed here.
 
-    Flow::Pose pose = Flow::getPose();
-
-    UART::sendPoseData(
-        pose.x, pose.y, pose.theta,
-        pose.vx, pose.vy, pose.omega
-    );
-
-    // TEMP DIAGNOSTIC -- silenced along with [Metal 0]/[Metal 1] above so
-    // [Flow raw] (2 Hz) isn't buried by this firing every loop() iteration
-    // (100+ Hz). Uncomment once the flow sensor axis debugging is done.
-    // Serial.printf(
-    //     "[Pose] x=%.3f m  y=%.3f m\n",
-    //     pose.x, pose.y
-    // );
+    // Uncomment for raw metal detector debugging:
+    // Serial.printf("[Metal 0] freq=%.2f Hz\n", freq0);
+    // Serial.printf("[Metal 1] freq=%.2f Hz\n", freq1);
 
     // Keep the loop responsive enough for smooth servo movement.
     delay(5);
