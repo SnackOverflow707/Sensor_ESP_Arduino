@@ -23,9 +23,9 @@
 // are native USB on the S3). Confirm these against your actual wiring
 // before flashing.
 #define FLOW_CS_PIN   18
-#define FLOW_SCK_PIN  15
-#define FLOW_MISO_PIN 16
-#define FLOW_MOSI_PIN 17
+#define FLOW_SCK_PIN  17
+#define FLOW_MISO_PIN 15
+#define FLOW_MOSI_PIN 16
 
 // Sensor reports motion in raw counts, not mm -- this scale factor is
 // NOT calibrated for your mounting height. 11.914 counts/mm is the
