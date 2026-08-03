@@ -74,70 +74,9 @@ unsigned long lastFlowUpdateMs = 0;
 
 unsigned long lastDebugPrintMs = 0;
 
-// --- Constant-velocity Kalman filter, one per axis ---
-// State = [position, velocity]. Raw flow dx/dy per sample is jittery
-// (confirmed on hardware), so instead of accumulating it straight into
-// position, each sample is treated as a noisy velocity measurement and
-// blended with a constant-velocity prediction.
-//
-// This does NOT fix drift or the uncalibrated FLOW_COUNTS_PER_MM scale
-// -- it only smooths noise on top of whatever estimate you'd get
-// anyway. Garbage scale factor in, smoothed garbage out.
-struct KalmanState1D
-{
-    float pos = 0.0f;
-    float vel = 0.0f;
-    // 2x2 covariance [[p00,p01],[p10,p11]] -- starts wide-open/uncertain.
-    float p00 = 1.0f, p01 = 0.0f, p10 = 0.0f, p11 = 1.0f;
-};
-
-// Both placeholders -- tune against the raw-vs-filtered numbers in the
-// debug print below. Bigger Q -> trusts new measurements more (less
-// smoothing, more responsive). Bigger R -> trusts the constant-velocity
-// model more (more smoothing, more lag).
-static constexpr float KF_PROCESS_NOISE = 50.0f;      // (mm/s^2)-ish, tune me
-static constexpr float KF_MEASUREMENT_NOISE = 400.0f; // (mm/s)^2-ish, tune me
-
-KalmanState1D kfX;
-KalmanState1D kfY;
-
-void kalmanPredict(KalmanState1D &s, float dt)
-{
-    s.pos += s.vel * dt;
-
-    const float p00 = s.p00 + dt * (s.p01 + s.p10) + dt * dt * s.p11 + KF_PROCESS_NOISE * dt;
-    const float p01 = s.p01 + dt * s.p11;
-    const float p10 = s.p10 + dt * s.p11;
-    const float p11 = s.p11 + KF_PROCESS_NOISE * dt;
-
-    s.p00 = p00;
-    s.p01 = p01;
-    s.p10 = p10;
-    s.p11 = p11;
-}
-
-// Measurement is a velocity reading (H = [0 1]) -- the flow sensor
-// gives displacement/dt each sample, not position directly.
-void kalmanUpdateVelocity(KalmanState1D &s, float measuredVel)
-{
-    const float y = measuredVel - s.vel;
-    const float S = s.p11 + KF_MEASUREMENT_NOISE;
-    const float k0 = s.p01 / S;
-    const float k1 = s.p11 / S;
-
-    s.pos += k0 * y;
-    s.vel += k1 * y;
-
-    const float p00 = s.p00 - k0 * s.p01;
-    const float p01 = s.p01 - k0 * s.p11;
-    const float p10 = s.p10 - k1 * s.p01;
-    const float p11 = s.p11 - k1 * s.p11;
-
-    s.p00 = p00;
-    s.p01 = p01;
-    s.p10 = p10;
-    s.p11 = p11;
-}
+// Position is just dx/dy integrated straight from the sensor, in mm.
+float g_flowPosX = 0.0f;
+float g_flowPosY = 0.0f;
 
 void generateReference(float freq, float* s, float* c)
 {
@@ -225,56 +164,40 @@ void updateServo()
     sweepServo.write(servoAngle);
 }
 
-// Runs one predict/update cycle of the per-axis Kalman filters and
-// hands back the filtered pos/vel plus the raw (unfiltered) velocity
-// for that sample -- print both so the filter can actually be tuned
-// instead of tuned blind.
+// Reads one motion sample and integrates it straight into position --
+// no filtering, no SQUAL/shutter validity gating. Whatever the sensor
+// reports gets sent, including noise and out-of-range garbage.
 void updateFlowSensor(
     float *outPosX, float *outPosY,
-    float *outVx, float *outVy,
-    float *outRawVx, float *outRawVy,
-    bool *outValid)
+    float *outVx, float *outVy)
 {
     const unsigned long now = millis();
     const float dt = (now - lastFlowUpdateMs) / 1000.0f;
     lastFlowUpdateMs = now;
 
-    *outRawVx = 0.0f;
-    *outRawVy = 0.0f;
-    *outValid = false;
+    float vx = 0.0f;
+    float vy = 0.0f;
 
     if (flowReady && dt > 0.0f)
     {
-        kalmanPredict(kfX, dt);
-        kalmanPredict(kfY, dt);
-
         int16_t dx, dy;
         uint8_t squal;
-        bool valid = flowSensor.readMotionBurst(&dx, &dy, &squal);
+        flowSensor.readMotionBurst(&dx, &dy, &squal);
 
-        if (valid)
-        {
-            const float dxMm = static_cast<float>(dx) / FLOW_COUNTS_PER_MM;
-            const float dyMm = static_cast<float>(dy) / FLOW_COUNTS_PER_MM;
+        const float dxMm = static_cast<float>(dx) / FLOW_COUNTS_PER_MM;
+        const float dyMm = static_cast<float>(dy) / FLOW_COUNTS_PER_MM;
 
-            *outRawVx = dxMm / dt;
-            *outRawVy = dyMm / dt;
+        vx = dxMm / dt;
+        vy = dyMm / dt;
 
-            kalmanUpdateVelocity(kfX, *outRawVx);
-            kalmanUpdateVelocity(kfY, *outRawVy);
-
-            *outValid = true;
-        }
-        // Invalid sample: predict still ran above, so pos/vel coast
-        // forward on the last known velocity rather than freezing or
-        // snapping to 0. outValid stays false -- receiver should not
-        // update its trust in this pose.
+        g_flowPosX += dxMm;
+        g_flowPosY += dyMm;
     }
 
-    *outPosX = kfX.pos;
-    *outPosY = kfY.pos;
-    *outVx = kfX.vel;
-    *outVy = kfY.vel;
+    *outPosX = g_flowPosX;
+    *outPosY = g_flowPosY;
+    *outVx = vx;
+    *outVy = vy;
 }
 
 void setup()
@@ -373,9 +296,7 @@ void loop()
 
     float flowPosX = 0.0f, flowPosY = 0.0f;
     float flowVx = 0.0f, flowVy = 0.0f;
-    float flowRawVx = 0.0f, flowRawVy = 0.0f;
-    bool  flowValid = false;
-    updateFlowSensor(&flowPosX, &flowPosY, &flowVx, &flowVy, &flowRawVx, &flowRawVy, &flowValid);
+    updateFlowSensor(&flowPosX, &flowPosY, &flowVx, &flowVy);
 
     // Only send a POSE frame when the flow sensor produced a fresh,
     // SQUAL-gated sample this tick. When invalid (surface too low-texture,
@@ -396,10 +317,10 @@ void loop()
 
         Serial.printf(
             "[IR] mag1=%u mag10=%u wifi=%d | [Metal] f0=%.2fHz f1=%.2fHz | "
-            "[Flow] rdy=%d valid=%d pos=(%.1f,%.1f)mm v_raw=(%.1f,%.1f) v_kf=(%.1f,%.1f)mm/s\n",
+            "[Flow] rdy=%d pos=(%.1f,%.1f)mm v=(%.1f,%.1f)mm/s\n",
             mag1ToSend, mag10ToSend, (mask & WIFI_SWITCH_MASK) != 0,
             freq0, freq1,
-            flowReady, flowValid, flowPosX, flowPosY, flowRawVx, flowRawVy, flowVx, flowVy
+            flowReady, flowPosX, flowPosY, flowVx, flowVy
         );
     }
 
