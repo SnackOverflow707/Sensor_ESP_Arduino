@@ -35,8 +35,11 @@ public:
     // should not integrate deltaX/deltaY into a position estimate when
     // this returns false.
     bool readMotionBurst(int16_t *deltaX, int16_t *deltaY, uint8_t *squal);
-
+    uint8_t getProductId() const;
+    uint8_t getRevision() const;
 private:
+uint8_t _productId = 0;
+uint8_t _revision = 0;
     uint8_t _cs;
 
     void    registerWrite(uint8_t reg, uint8_t value);

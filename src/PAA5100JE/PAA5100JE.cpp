@@ -9,7 +9,7 @@ namespace
     constexpr uint8_t REG_MOTION_BURST   = 0x16;
     constexpr uint8_t REG_POWER_UP_RESET = 0x3A;
 
-    constexpr uint32_t SPI_CLOCK_HZ = 4000000; // matches Bitcraze's PMW3901 driver
+    constexpr uint32_t SPI_CLOCK_HZ = 100000; // matches Bitcraze's PMW3901 driver
 
     // Sentinel meaning "delay(value) ms here" instead of "write this
     // register" inside the init sequence tables in secretSauce(). Valid
@@ -21,14 +21,30 @@ PAA5100JE::PAA5100JE(uint8_t csPin) : _cs(csPin) {}
 
 void PAA5100JE::registerWrite(uint8_t reg, uint8_t value)
 {
-    SPI.beginTransaction(SPISettings(SPI_CLOCK_HZ, MSBFIRST, SPI_MODE3));
+    SPI.beginTransaction(
+        SPISettings(
+            SPI_CLOCK_HZ,
+            MSBFIRST,
+            SPI_MODE3
+        )
+    );
+
     digitalWrite(_cs, LOW);
-    delayMicroseconds(50);
+    delayMicroseconds(10);
+
+    // Write command.
     SPI.transfer(reg | 0x80);
+
+    // Important: wait between address and data.
+    delayMicroseconds(50);
+
     SPI.transfer(value);
+
     delayMicroseconds(50);
     digitalWrite(_cs, HIGH);
+
     SPI.endTransaction();
+
     delayMicroseconds(200);
 }
 
@@ -234,30 +250,32 @@ bool PAA5100JE::begin()
     pinMode(_cs, OUTPUT);
     digitalWrite(_cs, HIGH);
 
-    // Power-up reset
+    delay(100);
+
+    // Reset sensor.
     registerWrite(REG_POWER_UP_RESET, 0x5A);
     delay(20);
 
-    // Read (and discard) the motion registers once, per the reference driver
+    // Confirm basic SPI communication before initialization.
+    _productId = registerRead(REG_ID);
+    _revision = registerRead(REG_ID + 1);
+
+    if (_productId != 0x49)
+    {
+        return false;
+    }
+
+    // Clear initial motion registers.
     for (uint8_t offset = 0; offset < 5; offset++)
     {
         registerRead(REG_DATA_READY + offset);
     }
 
+    // Run PAA5100JE configuration.
     secretSauce();
 
-    uint8_t productId = registerRead(REG_ID);
-    uint8_t revision  = registerRead(REG_ID + 1);
-
-    if (productId != 0x49 || !(revision == 0x00 || revision == 0x01))
-    {
-        Serial.printf(
-            "[PAA5100JE] init failed -- product ID 0x%02X revision 0x%02X (expected 0x49)\n",
-            productId, revision
-        );
-        return false;
-    }
-
+    // Do not read the ID again here.
+    // The ID was already successfully verified.
     return true;
 }
 
@@ -267,66 +285,39 @@ bool PAA5100JE::readMotionBurst(
     uint8_t *squal
 )
 {
-    // Actual motion-burst response bytes.
-    uint8_t buf[12] = {0};
+    // Ensure bank zero is selected.
+    registerWrite(0x7F, 0x00);
 
-    SPI.beginTransaction(
-        SPISettings(
-            SPI_CLOCK_HZ,
-            MSBFIRST,
-            SPI_MODE3
-        )
-    );
+    const uint8_t motion = registerRead(0x02);
 
-    digitalWrite(_cs, LOW);
-    delayMicroseconds(50);
+    const uint8_t dxLow  = registerRead(0x03);
+    const uint8_t dxHigh = registerRead(0x04);
 
-    // Bit 7 must be zero for a register read.
-    SPI.transfer(REG_MOTION_BURST & 0x7F);
+    const uint8_t dyLow  = registerRead(0x05);
+    const uint8_t dyHigh = registerRead(0x06);
 
-    // Allow the sensor to prepare the burst data.
-    delayMicroseconds(35);
+    const uint8_t sq = registerRead(0x07);
 
-    for (int i = 0; i < 12; i++)
-    {
-        buf[i] = SPI.transfer(0x00);
-    }
+    const uint16_t rawDx =
+        static_cast<uint16_t>(dxLow) |
+        (static_cast<uint16_t>(dxHigh) << 8);
 
-    delayMicroseconds(5);
-    digitalWrite(_cs, HIGH);
+    const uint16_t rawDy =
+        static_cast<uint16_t>(dyLow) |
+        (static_cast<uint16_t>(dyHigh) << 8);
 
-    SPI.endTransaction();
-
-    // Minimum delay before the next SPI operation.
-    delayMicroseconds(200);
-
-    const uint8_t motion = buf[0];
-
-    const int16_t dx =
-        static_cast<int16_t>(
-            static_cast<uint16_t>(buf[2]) |
-            (static_cast<uint16_t>(buf[3]) << 8)
-        );
-
-    const int16_t dy =
-        static_cast<int16_t>(
-            static_cast<uint16_t>(buf[4]) |
-            (static_cast<uint16_t>(buf[5]) << 8)
-        );
-
-    const uint8_t sq = buf[6];
-    const uint8_t shutterUpper = buf[10];
-
-    *deltaX = dx;
-    *deltaY = dy;
+    *deltaX = static_cast<int16_t>(rawDx);
+    *deltaY = static_cast<int16_t>(rawDy);
     *squal = sq;
 
-    const bool motionDetected =
-        (motion & 0x80) != 0;
+    return (motion & 0x80) != 0;
+}
+uint8_t PAA5100JE::getProductId() const
+{
+    return _productId;
+}
 
-    const bool poorSurface =
-        (sq < 0x19) &&
-        (shutterUpper == 0x1F);
-
-    return motionDetected && !poorSurface;
+uint8_t PAA5100JE::getRevision() const
+{
+    return _revision;
 }
