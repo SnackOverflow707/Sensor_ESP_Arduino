@@ -383,10 +383,10 @@ void loop()
     // internally but we don't transmit -- the main board simply won't
     // receive a POSE update, which is the correct behavior: stale/coasted
     // estimates shouldn't trigger a position update on the other side.
-    if (flowValid)
-    {
+    //if (flowValid)
+    //{
         UART::sendPoseData(flowPosX, flowPosY, 0.0f, flowVx, flowVy, 0.0f);
-    }
+    //}
 
     const unsigned long nowMs = millis();
 
@@ -404,5 +404,5 @@ void loop()
     }
 
     // Keep the loop responsive enough for smooth servo movement.
-    delay(5);
+    delay(20);
 }
