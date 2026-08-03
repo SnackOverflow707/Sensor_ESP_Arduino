@@ -261,31 +261,72 @@ bool PAA5100JE::begin()
     return true;
 }
 
-bool PAA5100JE::readMotionBurst(int16_t *deltaX, int16_t *deltaY, uint8_t *squal)
+bool PAA5100JE::readMotionBurst(
+    int16_t *deltaX,
+    int16_t *deltaY,
+    uint8_t *squal
+)
 {
-    uint8_t buf[13];
+    // Actual motion-burst response bytes.
+    uint8_t buf[12] = {0};
 
-    SPI.beginTransaction(SPISettings(SPI_CLOCK_HZ, MSBFIRST, SPI_MODE3));
+    SPI.beginTransaction(
+        SPISettings(
+            SPI_CLOCK_HZ,
+            MSBFIRST,
+            SPI_MODE3
+        )
+    );
+
     digitalWrite(_cs, LOW);
     delayMicroseconds(50);
-    buf[0] = SPI.transfer(REG_MOTION_BURST); // dummy byte clocked out with the address
-    for (int i = 1; i < 13; i++)
+
+    // Bit 7 must be zero for a register read.
+    SPI.transfer(REG_MOTION_BURST & 0x7F);
+
+    // Allow the sensor to prepare the burst data.
+    delayMicroseconds(35);
+
+    for (int i = 0; i < 12; i++)
     {
         buf[i] = SPI.transfer(0x00);
     }
-    delayMicroseconds(50);
+
+    delayMicroseconds(5);
     digitalWrite(_cs, HIGH);
+
     SPI.endTransaction();
 
-    uint8_t dr           = buf[1];
-    int16_t dx           = (int16_t)(buf[3] | (buf[4] << 8));
-    int16_t dy           = (int16_t)(buf[5] | (buf[6] << 8));
-    uint8_t sq           = buf[7];
-    uint8_t shutterUpper = buf[11];
+    // Minimum delay before the next SPI operation.
+    delayMicroseconds(200);
+
+    const uint8_t motion = buf[0];
+
+    const int16_t dx =
+        static_cast<int16_t>(
+            static_cast<uint16_t>(buf[2]) |
+            (static_cast<uint16_t>(buf[3]) << 8)
+        );
+
+    const int16_t dy =
+        static_cast<int16_t>(
+            static_cast<uint16_t>(buf[4]) |
+            (static_cast<uint16_t>(buf[5]) << 8)
+        );
+
+    const uint8_t sq = buf[6];
+    const uint8_t shutterUpper = buf[10];
 
     *deltaX = dx;
     *deltaY = dy;
-    *squal  = sq;
+    *squal = sq;
 
-    return (dr & 0x80) && !((sq < 0x19) && (shutterUpper == 0x1F));
+    const bool motionDetected =
+        (motion & 0x80) != 0;
+
+    const bool poorSurface =
+        (sq < 0x19) &&
+        (shutterUpper == 0x1F);
+
+    return motionDetected && !poorSurface;
 }

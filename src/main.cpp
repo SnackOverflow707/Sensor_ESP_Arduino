@@ -168,38 +168,64 @@ void updateServo()
 // no filtering, no SQUAL/shutter validity gating. Whatever the sensor
 // reports gets sent, including noise and out-of-range garbage.
 void updateFlowSensor(
-    float *outPosX, float *outPosY,
-    float *outVx, float *outVy)
+    float *outPosX,
+    float *outPosY,
+    float *outVx,
+    float *outVy,
+    float *outSqual,
+    bool *outValid
+)
 {
     const unsigned long now = millis();
-    const float dt = (now - lastFlowUpdateMs) / 1000.0f;
+
+    const float dt =
+        static_cast<float>(now - lastFlowUpdateMs) /
+        1000.0f;
+
     lastFlowUpdateMs = now;
 
     float vx = 0.0f;
     float vy = 0.0f;
+    float squalValue = 0.0f;
+    bool valid = false;
 
     if (flowReady && dt > 0.0f)
     {
-        int16_t dx, dy;
-        uint8_t squal;
-        flowSensor.readMotionBurst(&dx, &dy, &squal);
+        int16_t dx = 0;
+        int16_t dy = 0;
+        uint8_t squal = 0;
 
-        const float dxMm = static_cast<float>(dx) / FLOW_COUNTS_PER_MM;
-        const float dyMm = static_cast<float>(dy) / FLOW_COUNTS_PER_MM;
+        valid = flowSensor.readMotionBurst(
+            &dx,
+            &dy,
+            &squal
+        );
 
-        vx = dxMm / dt;
-        vy = dyMm / dt;
+        squalValue = static_cast<float>(squal);
+
+        // Integrate the raw reading regardless of valid.
+        const float dxMm =
+            static_cast<float>(dx) /
+            FLOW_COUNTS_PER_MM;
+
+        const float dyMm =
+            static_cast<float>(dy) /
+            FLOW_COUNTS_PER_MM;
 
         g_flowPosX += dxMm;
         g_flowPosY += dyMm;
+
+        vx = dxMm / dt;
+        vy = dyMm / dt;
     }
 
     *outPosX = g_flowPosX;
     *outPosY = g_flowPosY;
     *outVx = vx;
     *outVy = vy;
+    *outSqual = squalValue;
+    *outValid = valid;
 }
-
 void setup()
 {
     Serial.begin(115200);
@@ -294,10 +320,21 @@ void loop()
     UART::sendMetalData(0, freq0);
     UART::sendMetalData(1, freq1);
 
-    float flowPosX = 0.0f, flowPosY = 0.0f;
-    float flowVx = 0.0f, flowVy = 0.0f;
-    updateFlowSensor(&flowPosX, &flowPosY, &flowVx, &flowVy);
+    float flowPosX = 0.0f;
+float flowPosY = 0.0f;
+float flowVx = 0.0f;
+float flowVy = 0.0f;
+float flowSqual = 0.0f;
+bool flowValid = false;
 
+updateFlowSensor(
+    &flowPosX,
+    &flowPosY,
+    &flowVx,
+    &flowVy,
+    &flowSqual,
+    &flowValid
+);
     // Only send a POSE frame when the flow sensor produced a fresh,
     // SQUAL-gated sample this tick. When invalid (surface too low-texture,
     // out of range, or sensor not ready), the Kalman filter coasted
